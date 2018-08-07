@@ -1,0 +1,12 @@
+<resources>
+    <string name="app_name">MyFlexibleFragment</string>
+
+    <!-- TODO: Remove or change this placeholder text -->
+    <string name="hello_blank_fragment">Hello blank fragment</string>
+    <string name="hello_ini_home_fragment">Hello ini home Fragment</string>
+    <string name="ke_halaman_category">Ke halaman Category</string>
+    <string name="halaman_category">Halaman Category</string>
+    <string name="kategory_lifestyle">Kategory LifeStyle</string>
+    <string name="kategori_lifestyle">Kategori LifeStyle</string>
+    />
+</resources>
