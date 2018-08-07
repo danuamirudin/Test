@@ -1,36 +1,118 @@
-#
-# Build configuration for Circle CI
-#
+version: 2
 
-general:
-    artifacts:
-        - /home/ubuntu/AndroidApp/app/build/outputs/apk/
+jobs:
+  build:
+    docker:
+      # specify the version you desire here
+       - image: circleci/ruby:2.5.1-node-browsers
 
-machine:
+      # Specify service dependencies here if necessary
+      # CircleCI maintains a library of pre-built images
+      # documented at https://circleci.com/docs/2.0/circleci-images/
+       - image: circleci/postgres:9.6.8-postgis-ram
+         environment:
+            POSTGRES_USER: evopark
+            POSTGRES_DB:   xxx
+            POSTGRES_PASSWORD: xxx
+
+    working_directory: ~/repo
+
+    steps:
+      - checkout
+
+      # Download and cache dependencies
+      - restore_cache:
+          keys:
+          - v1-dependencies-{{ checksum "Gemfile.lock" }}
+          # fallback to using the latest cache if no exact match is found
+          - v1-dependencies-
+
+      - run:
+          name: install dependencies
+          command: |
+            sudo apt-get update -qq && sudo apt-get install -qq build-essential nodejs redis-tools libpq-dev postgresql-client
+            bundle install --jobs=4 --retry=3 --path vendor/bundle
+      - save_cache:
+          paths:
+            - ./vendor/bundle
+          key: v1-dependencies-{{ checksum "Gemfile.lock" }}
+
+      # Database setup
+      - run: cp config/database.yml.example config/database.yml
+      - run: cp config/cable.yml.example config/cable.yml
+      - run: bundle exec rake db:structure:load
+
+      # run tests
+      - run:
+          name: run tests
+          command: |
+            mkdir /tmp/test-results
+            TEST_FILES="$(circleci tests glob "spec/**/*_spec.rb" | circleci tests split --split-by=timings)"
+            bundle exec rspec --format progress \
+                            --format RspecJunitFormatter \
+                            --out /tmp/test-results/rspec.xml \
+                            --format progress \
+                            $TEST_FILES
+      # collect reports
+      - store_test_results:
+          path: /tmp/test-results
+      - store_artifacts:
+          path: /tmp/test-results
+          destination: test-results
+
+  # basic deploy job. Other environment variables gets passed in via `context` statement of the workflow
+  deploy_common: &deploy_common
+    docker:
+      - image: circleci/ruby:2.5.1-node-browsers
+    working_directory: ~/repo
     environment:
-        ANDROID_HOME: /usr/local/android-sdk-linux
-        GRADLE_OPTS: '-Dorg.gradle.jvmargs="-Xmx2048m -XX:+HeapDumpOnOutOfMemoryError"'
-        _JAVA_OPTIONS: "-Xms512m -Xmx1024m"
-  java:
-    version: oraclejdk8
-    
-dependencies:
-    pre:
-        - echo y | android update sdk --no-ui --all --filter tools,platform-tools,android-25
-        - echo y | android update sdk --no-ui --all --filter build-tools-25.0.2
-        - echo y | android update sdk --no-ui --all --filter android-25
-        - echo y | android update sdk --no-ui --all --filter tools
-        - echo y | android update sdk --no-ui --all --filter extra-android-m2repository
-        - echo y | android update sdk --no-ui --all --filter extra-android-support
-        - echo y | android update sdk --no-ui --all --filter extra-google-google_play_services
-        - echo y | android update sdk --no-ui --all --filter extra-google-m2repository
-    override:
-        - chmod +x gradlew
-        - ANDROID_HOME=/usr/local/android-sdk-linux ./gradlew dependencies
+      PRODUCT_DEPLOY_SSH_KEY: /home/circleci/.ssh/id_rsa
+    steps:
+      - checkout
+      - run:
+          name: Bundle Install
+          command: bundle check || bundle install
+      - run:
+          name: Deploy to AWS if tests pass
+          command: bundle exec cap $DEPLOY_ENV deploy
+    deploy-develop:
+      <<: *deploy_common
+    deploy-staging:
+      <<: *deploy_common
+    deploy-production:
+      <<: *deploy_common
 
-test:
-    override:
-        - (./gradlew assemble):
-            timeout: 360
-        # copy the build outputs to artifacts
-        - cp -r app/build/outputs $CIRCLE_ARTIFACTS 
+workflows:
+  version: 2
+  build-deploy:
+    jobs:
+      - build
+      - deploy-develop:
+          requires:
+            - build
+          context: develop
+          filters:
+            branches:
+              only: develop
+      - deploy-staging:
+          requires:
+            - build
+          context: staging
+          filters:
+            branches:
+              only: master
+      - production-release:
+          type: approval
+          requires:
+            - build
+          filters:
+            branches:
+              only: master
+      - deploy-production:
+          requires:
+            - production-release
+          context: production
+          filters:
+            branches:
+              only: master
+
