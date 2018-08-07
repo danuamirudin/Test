@@ -17,6 +17,9 @@ jobs:
     steps:
       - checkout
       - run:
+          name: Download Repo
+          command: git clone --recursive git@github.com:danuamirudin/Test.git
+      - run:
           name: Copy Licenses
           command: cp -r licenses/. $ANDROID_HOME/licenses
       - restore_cache:
